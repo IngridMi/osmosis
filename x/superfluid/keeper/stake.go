@@ -258,11 +258,11 @@ func (k Keeper) SuperfluidDelegate(ctx sdk.Context, sender string, lockID uint64
 	// get the intermediate account for this (denom, validator) pair.
 	// This account tracks the amount of osmo being considered as staked.
 	// If an intermediary account doesn't exist, then create it + a perpetual gauge.
-	acc, err := k.GetOrCreateIntermediaryAccount(ctx, lock.Coins[0].Denom, valAddr)
+	intermediaryAccount, err := k.GetOrCreateIntermediaryAccount(ctx, lock.Coins[0].Denom, valAddr)
 	if err != nil {
 		return err
 	}
-	mAddr := acc.GetAccAddress()
+	mAddr := intermediaryAccount.GetAccAddress()
 
 	// mint OSMO token based on TWAP of locked denom to denom module account
 	// TODO: Figure out whats going on in next 3 code blocks
@@ -271,7 +271,7 @@ func (k Keeper) SuperfluidDelegate(ctx sdk.Context, sender string, lockID uint64
 	// (3) If no account exists, make a new account at this addr
 	// (4) send newly minted coins to this account.
 	bondDenom := k.sk.BondDenom(ctx)
-	amount := k.GetSuperfluidOSMOTokens(ctx, acc.Denom, lock.Coins.AmountOf(acc.Denom))
+	amount := k.GetSuperfluidOSMOTokens(ctx, intermediaryAccount.Denom, lock.Coins.AmountOf(intermediaryAccount.Denom))
 	if amount.IsZero() {
 		return types.ErrOsmoEquivalentZeroNotAllowed
 	}
@@ -281,10 +281,19 @@ func (k Keeper) SuperfluidDelegate(ctx sdk.Context, sender string, lockID uint64
 	if err != nil {
 		return err
 	}
+
+	acc := k.ak.NewAccount(ctx, authtypes.NewModuleAccount(
+		authtypes.NewBaseAccountWithAddress(
+			mAddr,
+		),
+		mAddr.String(),
+	))
+
 	// TODO: @Dev added this hasAccount gating, think through if theres an edge case that makes it not right
 	if !k.ak.HasAccount(ctx, mAddr) {
 		// TODO: Why is this a base account, not a module account?
-		k.ak.SetAccount(ctx, authtypes.NewBaseAccount(mAddr, nil, 0, 0))
+
+		k.ak.SetAccount(ctx, acc)
 	}
 	err = k.bk.SendCoinsFromModuleToAccount(ctx, minttypes.ModuleName, mAddr, coins)
 	if err != nil {
@@ -300,7 +309,7 @@ func (k Keeper) SuperfluidDelegate(ctx sdk.Context, sender string, lockID uint64
 	}
 
 	// create connection record between lock id and intermediary account
-	k.SetLockIdIntermediaryAccountConnection(ctx, lockID, acc)
+	k.SetLockIdIntermediaryAccountConnection(ctx, lockID, intermediaryAccount)
 
 	return nil
 }
